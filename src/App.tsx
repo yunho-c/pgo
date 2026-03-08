@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, Type } from '@google/genai';
 import * as makerjs from 'makerjs';
-import { Play, Loader2, Settings2, Code, FileCode2, Sparkles } from 'lucide-react';
+import { Play, Loader2, Settings2, Code, FileCode2, Sparkles, BoxSelect, Ruler } from 'lucide-react';
 
 interface Parameter {
   name: string;
@@ -30,6 +30,54 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'params' | 'code'>('params');
   const [rightPanelTab, setRightPanelTab] = useState<'preview' | 'makerjs' | 'svg'>('preview');
+
+  const [showModelBBox, setShowModelBBox] = useState(false);
+  const [showCustomBBox, setShowCustomBBox] = useState(false);
+  const [customBBox, setCustomBBox] = useState<{x: number, y: number, w: number, h: number} | null>(null);
+  const [isDrawingBBox, setIsDrawingBBox] = useState(false);
+  const [drawStart, setDrawStart] = useState<{x: number, y: number} | null>(null);
+  
+  const [svgInner, setSvgInner] = useState<string>('');
+  const [svgViewBox, setSvgViewBox] = useState<string>('');
+  const [extents, setExtents] = useState<any>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const getSvgPoint = (e: React.PointerEvent) => {
+    if (!svgRef.current) return { x: 0, y: 0 };
+    const svg = svgRef.current;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    return pt.matrixTransform(ctm.inverse());
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!showCustomBBox) return;
+    const pt = getSvgPoint(e);
+    setDrawStart(pt);
+    setCustomBBox({ x: pt.x, y: pt.y, w: 0, h: 0 });
+    setIsDrawingBBox(true);
+    (e.target as Element).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDrawingBBox || !drawStart) return;
+    const pt = getSvgPoint(e);
+    setCustomBBox({
+      x: Math.min(drawStart.x, pt.x),
+      y: Math.min(drawStart.y, pt.y),
+      w: Math.abs(pt.x - drawStart.x),
+      h: Math.abs(pt.y - drawStart.y)
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!isDrawingBBox) return;
+    setIsDrawingBBox(false);
+    (e.target as Element).releasePointerCapture(e.pointerId);
+  };
 
   const generateModel = async () => {
     setIsGenerating(true);
@@ -125,6 +173,12 @@ User request: "${prompt}"`,
         useSvgPathOnly: false
       });
       
+      const svgInnerMatch = svg.match(/<svg[^>]*>([\s\S]*?)<\/svg>/i);
+      setSvgInner(svgInnerMatch ? svgInnerMatch[1] : '');
+      const viewBoxMatch = svg.match(/viewBox="([^"]+)"/i);
+      setSvgViewBox(viewBoxMatch ? viewBoxMatch[1] : '');
+      setExtents(makerjs.measure.modelExtents(model));
+      
       setSvgOutput(svg);
       setError(null);
     } catch (err: any) {
@@ -132,6 +186,12 @@ User request: "${prompt}"`,
       setError('Error rendering model: ' + err.message);
     }
   }, [generatedData, paramValues]);
+
+  const vbWidth = extents ? (extents.high[0] - extents.low[0]) : 100;
+  const vbHeight = extents ? (extents.high[1] - extents.low[1]) : 100;
+  const vbMax = Math.max(vbWidth, vbHeight) || 100;
+  const strokeWidth = vbMax * 0.005;
+  const fontSize = vbMax * 0.03;
 
   return (
     <div className="flex h-screen w-full bg-slate-50 text-slate-900 font-sans">
@@ -289,6 +349,29 @@ User request: "${prompt}"`,
               SVG Output
             </button>
           </div>
+          
+          {/* Toolbar */}
+          {rightPanelTab === 'preview' && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowModelBBox(!showModelBBox)}
+                className={`p-2 rounded-md transition-colors ${showModelBBox ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}
+                title="Toggle Model Bounding Box"
+              >
+                <BoxSelect className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  setShowCustomBBox(!showCustomBBox);
+                  if (showCustomBBox) setCustomBBox(null);
+                }}
+                className={`p-2 rounded-md transition-colors ${showCustomBBox ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}
+                title="Draw Measurement Box"
+              >
+                <Ruler className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Content Area */}
@@ -302,11 +385,97 @@ User request: "${prompt}"`,
               }}></div>
               
               {svgOutput ? (
-                <div className="absolute inset-0 p-8 flex items-center justify-center">
-                  <div 
-                    className="preview-svg relative z-10 w-full h-full flex items-center justify-center text-slate-900 drop-shadow-xl"
-                    dangerouslySetInnerHTML={{ __html: svgOutput }}
-                  />
+                <div className="absolute inset-0 p-8 flex items-center justify-center preview-svg">
+                  <svg 
+                    ref={svgRef}
+                    viewBox={svgViewBox || "0 0 100 100"} 
+                    className="w-full h-full drop-shadow-xl overflow-visible"
+                    preserveAspectRatio="xMidYMid meet"
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerLeave={handlePointerUp}
+                    style={{ cursor: showCustomBBox ? 'crosshair' : 'default' }}
+                  >
+                    <g 
+                      className="text-slate-900"
+                      dangerouslySetInnerHTML={{ __html: svgInner }} 
+                    />
+                    
+                    {/* Model Bounding Box */}
+                    {showModelBBox && extents && (
+                      <g className="text-blue-500 stroke-current">
+                        <rect 
+                          x={extents.low[0]} 
+                          y={-extents.high[1]} 
+                          width={extents.high[0] - extents.low[0]} 
+                          height={extents.high[1] - extents.low[1]} 
+                          fill="none" 
+                          strokeWidth={strokeWidth} 
+                          strokeDasharray={`${strokeWidth * 2} ${strokeWidth * 2}`} 
+                        />
+                        <text 
+                          x={extents.low[0] + (extents.high[0] - extents.low[0])/2} 
+                          y={-extents.high[1] - fontSize * 0.5} 
+                          fontSize={fontSize} 
+                          textAnchor="middle" 
+                          fill="currentColor"
+                          fontFamily="monospace"
+                        >
+                          {(extents.high[0] - extents.low[0]).toFixed(2)}
+                        </text>
+                        <text 
+                          x={extents.high[0] + fontSize * 0.5} 
+                          y={-extents.high[1] + (extents.high[1] - extents.low[1])/2 + fontSize * 0.3} 
+                          fontSize={fontSize} 
+                          textAnchor="start" 
+                          fill="currentColor"
+                          fontFamily="monospace"
+                        >
+                          {(extents.high[1] - extents.low[1]).toFixed(2)}
+                        </text>
+                      </g>
+                    )}
+
+                    {/* Custom Bounding Box */}
+                    {showCustomBBox && customBBox && (
+                      <g className="text-emerald-500 stroke-current">
+                        <rect 
+                          x={customBBox.x} 
+                          y={customBBox.y} 
+                          width={customBBox.w} 
+                          height={customBBox.h} 
+                          fill="rgba(16, 185, 129, 0.1)" 
+                          strokeWidth={strokeWidth} 
+                          strokeDasharray={`${strokeWidth * 2} ${strokeWidth * 2}`} 
+                        />
+                        {customBBox.w > 0 && customBBox.h > 0 && (
+                          <>
+                            <text 
+                              x={customBBox.x + customBBox.w/2} 
+                              y={customBBox.y - fontSize * 0.5} 
+                              fontSize={fontSize} 
+                              textAnchor="middle" 
+                              fill="currentColor"
+                              fontFamily="monospace"
+                            >
+                              {customBBox.w.toFixed(2)}
+                            </text>
+                            <text 
+                              x={customBBox.x + customBBox.w + fontSize * 0.5} 
+                              y={customBBox.y + customBBox.h/2 + fontSize * 0.3} 
+                              fontSize={fontSize} 
+                              textAnchor="start" 
+                              fill="currentColor"
+                              fontFamily="monospace"
+                            >
+                              {customBBox.h.toFixed(2)}
+                            </text>
+                          </>
+                        )}
+                      </g>
+                    )}
+                  </svg>
                 </div>
               ) : (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-slate-400">
