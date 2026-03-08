@@ -1,0 +1,5 @@
+{
+  "name": "PGO",
+  "description": "Parametric Graphic Objects generator using Maker.js and LLMs",
+  "requestFramePermissions": []
+}
