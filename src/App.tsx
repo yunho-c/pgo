@@ -275,9 +275,31 @@ User request: "${prompt}"`,
                         <label className="text-sm font-medium text-slate-700 capitalize">
                           {param.name.replace(/([A-Z])/g, ' $1').trim()}
                         </label>
-                        <span className="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-600">
-                          {paramValues[param.name]}
-                        </span>
+                        <input
+                          type="number"
+                          value={paramValues[param.name] ?? param.value}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setParamValues(prev => ({
+                              ...prev,
+                              [param.name]: isNaN(val) ? 0 : val
+                            }));
+                            if (!isNaN(val)) {
+                              setGeneratedData(prev => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  parameters: prev.parameters.map(p => 
+                                    p.name === param.name 
+                                      ? { ...p, min: Math.min(p.min, val), max: Math.max(p.max, val) }
+                                      : p
+                                  )
+                                };
+                              });
+                            }
+                          }}
+                          className="w-20 text-right text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-600 outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
                       </div>
                       <input
                         type="range"
@@ -292,8 +314,40 @@ User request: "${prompt}"`,
                         className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                       />
                       <div className="flex justify-between text-xs text-slate-400 font-mono">
-                        <span>{param.min}</span>
-                        <span>{param.max}</span>
+                        <input
+                          type="number"
+                          value={param.min}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (!isNaN(val)) {
+                              setGeneratedData(prev => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  parameters: prev.parameters.map(p => p.name === param.name ? { ...p, min: val } : p)
+                                };
+                              });
+                            }
+                          }}
+                          className="w-16 bg-transparent outline-none focus:bg-slate-100 focus:text-slate-600 rounded px-1 -ml-1 hover:bg-slate-50"
+                        />
+                        <input
+                          type="number"
+                          value={param.max}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (!isNaN(val)) {
+                              setGeneratedData(prev => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  parameters: prev.parameters.map(p => p.name === param.name ? { ...p, max: val } : p)
+                                };
+                              });
+                            }
+                          }}
+                          className="w-16 text-right bg-transparent outline-none focus:bg-slate-100 focus:text-slate-600 rounded px-1 -mr-1 hover:bg-slate-50"
+                        />
                       </div>
                     </div>
                   ))}
